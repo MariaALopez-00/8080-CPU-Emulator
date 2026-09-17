@@ -82,6 +82,31 @@ class Assembler8080 {
         };
         this.regs = { 'B': 0, 'C': 1, 'D': 2, 'E': 3, 'H': 4, 'L': 5, 'M': 6, 'A': 7 };
         this.rps = { 'B': 0, 'C': 0, 'D': 1, 'E': 1, 'H': 2, 'L': 2, 'SP': 3, 'PSW': 3, 'BC': 0, 'DE': 1, 'HL': 2 };
+
+        // ═══════════════════════════════════════════════════════════════
+        // ═══ [FPU] PSEUDO-INSTRUCCIONES DEL COPROCESADOR ═══════════════
+        // ═══════════════════════════════════════════════════════════════
+        // Direcciones base de los registros flotantes F0 y F1 en la zona
+        // mapeada del FPU (ver fpu.js). Cada registro ocupa 4 bytes IEEE 754.
+        // ═══════════════════════════════════════════════════════════════
+        this.fpuRegs = {
+            'F0': 0xFF01,
+            'F1': 0xFF05
+        };
+
+        // Tabla de pseudo-instrucciones del FPU. Solo las 6 esenciales:
+        //   - load_imm  ->  FLDI Fx, valor   (20 bytes)
+        //   - store_mem ->  FSTA addr        (24 bytes)
+        //   - cmd       ->  FADD/FSUB/FMUL/FDIV  (5 bytes cada una)
+        this.fpuPseudos = {
+            'FLDI': { type: 'load_imm',  size: 20 },
+            'FSTA': { type: 'store_mem', size: 24 },
+            'FADD': { type: 'cmd', cmd: 0x01, size: 5 },
+            'FSUB': { type: 'cmd', cmd: 0x02, size: 5 },
+            'FMUL': { type: 'cmd', cmd: 0x03, size: 5 },
+            'FDIV': { type: 'cmd', cmd: 0x04, size: 5 }
+        };
+        // ═══════════════════════════════════════════════════════════════
     }
 
     assemble(source) {
@@ -117,6 +142,15 @@ class Assembler8080 {
                 return { type: 'data', mnemonic, tokens, pc };
             }
 
+            // ═══ [FPU] Chequeo de pseudo-instrucciones del coprocesador ═══
+            if (this.fpuPseudos[mnemonic]) {
+                const pc = currentPC;
+                const size = this.fpuPseudos[mnemonic].size;
+                currentPC += size;
+                return { type: 'fpu', mnemonic, tokens, pc, size };
+            }
+            // ═══════════════════════════════════════════════════════════════
+
             const info = this.opcodes[mnemonic];
             if (!info) throw new Error(`Unknown mnemonic: ${mnemonic}`);
             const pc = currentPC;
@@ -135,6 +169,10 @@ class Assembler8080 {
                 for (let i = 1; i < line.tokens.length; i++) {
                     binary[pc++] = this.parseValue(line.tokens[i], labels);
                 }
+            } else if (line.type === 'fpu') {
+                // ═══ [FPU] Expansión de pseudo-instrucciones del coprocesador ═══
+                pc = this.generateFpuCode(line, labels, binary, pc);
+                // ═══════════════════════════════════════════════════════════════
             } else {
                 const code = this.generateOpcode(line, labels);
                 binary[pc++] = code.byte1;
@@ -245,6 +283,96 @@ class Assembler8080 {
         }
         return parsed;
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ═══ [FPU] GENERACIÓN DE CÓDIGO PARA PSEUDO-INSTRUCCIONES ═════════
+    // ═══════════════════════════════════════════════════════════════════
+    // Estas 6 pseudo-instrucciones se expanden a secuencias de 8080
+    // nativo que leen/escriben la zona mapeada del FPU (0xFF00-0xFF1F).
+    //
+    // Mapa de direcciones usadas:
+    //   0xFF00  -> Puerto de comando (dispara la operación en el FPU)
+    //   0xFF01  -> Registro flotante F0 (4 bytes, IEEE 754, little-endian)
+    //   0xFF05  -> Registro flotante F1 (4 bytes, IEEE 754, little-endian)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Convierte un número flotante a sus 4 bytes IEEE 754 (little-endian)
+    floatToBytes(value) {
+        const buf = new ArrayBuffer(4);
+        const f32 = new Float32Array(buf);
+        const u32 = new Uint32Array(buf);
+        f32[0] = value;
+        const bits = u32[0] >>> 0;
+        return [
+            bits & 0xFF,
+            (bits >> 8) & 0xFF,
+            (bits >> 16) & 0xFF,
+            (bits >> 24) & 0xFF
+        ];
+    }
+
+    // Expande una pseudo-instrucción del FPU a bytes nativos 8080.
+    // Devuelve el nuevo PC después de escribir todos los bytes.
+    generateFpuCode(line, labels, binary, pc) {
+        const mnemonic = line.mnemonic;
+        const tokens = line.tokens;
+        const pseudo = this.fpuPseudos[mnemonic];
+
+        if (pseudo.type === 'cmd') {
+            // ── FADD / FSUB / FMUL / FDIV ──
+            // Expansión:  MVI A, cmd  ;  STA 0FF00H     (5 bytes)
+            // Al escribir en 0xFF00, el FPU ejecuta la operación.
+            binary[pc++] = 0x3E;                 // MVI A, imm
+            binary[pc++] = pseudo.cmd & 0xFF;
+            binary[pc++] = 0x32;                 // STA addr
+            binary[pc++] = 0x00;                 // addr low  = 0x00
+            binary[pc++] = 0xFF;                 // addr high = 0xFF
+
+        } else if (pseudo.type === 'load_imm') {
+            // ── FLDI Fx, valor ──
+            // Expansión:  4 × ( MVI A, byte ; STA reg+i )   (20 bytes)
+            // Carga los 4 bytes del float en el registro indicado.
+            const regName = tokens[1] ? tokens[1].toUpperCase() : '';
+            if (this.fpuRegs[regName] === undefined) {
+                throw new Error(`Invalid FPU register: ${tokens[1]} in ${mnemonic} instruction`);
+            }
+            const value = parseFloat(tokens[2]);
+            if (isNaN(value)) {
+                throw new Error(`Invalid float value: ${tokens[2]} in ${mnemonic} instruction`);
+            }
+            const baseAddr = this.fpuRegs[regName];
+            const bytes = this.floatToBytes(value);
+            for (let i = 0; i < 4; i++) {
+                const addr = baseAddr + i;
+                binary[pc++] = 0x3E;             // MVI A, byte
+                binary[pc++] = bytes[i];
+                binary[pc++] = 0x32;             // STA addr
+                binary[pc++] = addr & 0xFF;
+                binary[pc++] = (addr >> 8) & 0xFF;
+            }
+
+        } else if (pseudo.type === 'store_mem') {
+            // ── FSTA addr ──
+            // Expansión:  4 × ( LDA 0FF01+i ; STA addr+i )   (24 bytes)
+            // Copia los 4 bytes del resultado F0 a la dirección indicada.
+            const addr = this.parseValue(tokens[1], labels);
+            for (let i = 0; i < 4; i++) {
+                const srcAddr = 0xFF01 + i;
+                const dstAddr = (addr + i) & 0xFFFF;
+                binary[pc++] = 0x3A;             // LDA srcAddr
+                binary[pc++] = srcAddr & 0xFF;
+                binary[pc++] = (srcAddr >> 8) & 0xFF;
+                binary[pc++] = 0x32;             // STA dstAddr
+                binary[pc++] = dstAddr & 0xFF;
+                binary[pc++] = (dstAddr >> 8) & 0xFF;
+            }
+        }
+
+        return pc;
+    }
+    // ═══════════════════════════════════════════════════════════════════
+    // ═══ [FPU] FIN DE LA GENERACIÓN DE PSEUDO-INSTRUCCIONES ══════════
+    // ═══════════════════════════════════════════════════════════════════
 }
 
 if (typeof module !== 'undefined') {

@@ -68,8 +68,9 @@ section {
 }
 
 #emulator-section {
-    flex: 2;
+    flex: 5;
     overflow-y: auto;
+    min-width: 0;
 }
 
 h2 {
@@ -265,4 +266,98 @@ button:disabled {
 
 .stack-val {
     font-weight: bold;
+}
+
+
+#coprocessor-section {
+    flex: 3;
+    overflow-y: auto;
+    min-width: 0;
+}
+
+#coprocessor-section .card {
+    margin-bottom: 1rem;
+}
+
+#coprocessor-section .card:last-child {
+    margin-bottom: 0;
+}
+
+/* Rejilla 2x2 para los registros flotantes */
+.fpu-reg-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+
+.fpu-reg-box {
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: #f8fafc;
+    text-align: center;
+    overflow: hidden;
+}
+
+.fpu-reg-box > span {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--secondary-color);
+    background: #f1f5f9;
+    padding: 2px 0;
+    font-weight: bold;
+}
+
+.fpu-reg-val {
+    font-family: 'Courier New', Courier, monospace;
+    font-weight: bold;
+    font-size: 1rem;
+    padding: 4px 0 2px 0;
+    color: var(--primary-color);
+    word-break: break-all;
+}
+
+.fpu-reg-hex {
+    display: block;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.7rem;
+    color: var(--secondary-color);
+    padding-bottom: 4px;
+    letter-spacing: 0.5px;
+}
+
+/* Pila del FPU (mismo estilo que la pila del CPU) */
+#fpu-stack-table {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.fpu-stack-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: #f8fafc;
+}
+
+.fpu-stack-row.active {
+    background-color: #fde047;
+    border-color: #eab308;
+    font-weight: bold;
+}
+
+.fpu-stack-idx {
+    color: var(--secondary-color);
+    white-space: pre;
+}
+
+.fpu-stack-val {
+    font-weight: bold;
+}
+
+.fpu-stack-row.active .fpu-stack-idx {
+    color: #713f12;
 }

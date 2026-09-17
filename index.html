@@ -3,20 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Intel 8080 Emulator & Assembler</title>
+    <title>Intel 8080 & FPU</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <header>
         <div class="header-container">
-            <h1>Intel 8080 Emulator & Assembler</h1>
-            <span class="version-badge">Version 2.1</span>
+            <h1>Intel 8080 Emulator & Floating-Point Unit with Assembler</h1>
+            <span class="version-badge">Version 3.0</span>
         </div>
     </header>
 
-    <main>
+        <main>
         <section id="editor-section">
-            <h2>Assembler</h2>
+            <h2>Assembler Code</h2>
             <textarea id="code-editor" spellcheck="false" placeholder="Write your 8080 assembly here...
 Example:
 MVI A, 5
@@ -94,9 +94,65 @@ HLT"></textarea>
                 </div>
             </div>
         </section>
+        
+        <section id="coprocessor-section">
+            <h2>FPU Coprocessor</h2>
+
+            <div class="card">
+                <h3>Floating-Point Registers</h3>
+                <div class="fpu-reg-grid">
+                    <div class="fpu-reg-box">
+                        <span>F0</span>
+                        <div class="fpu-reg-val" id="fpu-f0">0.0</div>
+                        <small class="fpu-reg-hex" id="fpu-f0-hex">00000000</small>
+                    </div>
+                    <div class="fpu-reg-box">
+                        <span>F1</span>
+                        <div class="fpu-reg-val" id="fpu-f1">0.0</div>
+                        <small class="fpu-reg-hex" id="fpu-f1-hex">00000000</small>
+                    </div>
+                    <div class="fpu-reg-box">
+                        <span>F2</span>
+                        <div class="fpu-reg-val" id="fpu-f2">0.0</div>
+                        <small class="fpu-reg-hex" id="fpu-f2-hex">00000000</small>
+                    </div>
+                    <div class="fpu-reg-box">
+                        <span>F3</span>
+                        <div class="fpu-reg-val" id="fpu-f3">0.0</div>
+                        <small class="fpu-reg-hex" id="fpu-f3-hex">00000000</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>FPU Flags (FSW)</h3>
+                <div class="flags-row">
+                    <div class="flag-box" title="Zero Flag: se activa cuando el resultado es exactamente 0.0."><span>Z</span><div id="fpu-flag-z">0</div></div>
+                    <div class="flag-box" title="Sign Flag: se activa cuando el resultado es negativo (signo IEEE 754 = 1)."><span>S</span><div id="fpu-flag-s">0</div></div>
+                    <div class="flag-box" title="Overflow: el resultado es infinito (magnitud demasiado grande para float32)."><span>OV</span><div id="fpu-flag-ov">0</div></div>
+                    <div class="flag-box" title="Underflow: el resultado es tan pequeño que se redondea a 0.0 por límite de precisión."><span>UN</span><div id="fpu-flag-un">0</div></div>
+                </div>
+                <div class="flags-row">
+                    <div class="flag-box" title="Precision: el resultado perdió bits significativos por redondeo."><span>PR</span><div id="fpu-flag-pr">0</div></div>
+                    <div class="flag-box" title="Invalid: operación indefinida (ej. √(-1), 0/0, log(-1))."><span>INV</span><div id="fpu-flag-inv">0</div></div>
+                    <div class="flag-box" title="Divide by Zero: se intentó dividir entre 0.0."><span>DZ</span><div id="fpu-flag-dz">0</div></div>
+                </div>
+                <div class="reg-row" style="margin-top: 0.75rem;">
+                    <div class="reg-box"><span>FSW</span><div id="fpu-status-byte">00</div></div>
+                    <div class="reg-box"><span>FCW</span><div id="fpu-control-byte">00</div></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>FPU Stack (SP: <span id="fpu-sp">0</span>)</h3>
+                <div id="fpu-stack-table"></div>
+            </div>
+
+        </section>
     </main>
 
     <script src="cpu.js"></script>
+    <script src="fpu.js"></script>
     <script src="assembler.js"></script>
     <script src="main.js"></script>
 </body>

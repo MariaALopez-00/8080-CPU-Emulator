@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Tests - Intel 8080 + FPU</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 2rem;
+            margin: 0;
+        }
+        h1 {
+            color: #60a5fa;
+            border-bottom: 2px solid #334155;
+            padding-bottom: 0.5rem;
+        }
+        .summary {
+            margin: 1rem 0;
+            padding: 1rem;
+            background: #0f172a;
+            border-radius: 6px;
+            font-size: 1.1rem;
+        }
+        .summary .total { color: #94a3b8; }
+        .summary .passed { color: #4ade80; font-weight: bold; }
+        .summary .failed { color: #f87171; font-weight: bold; }
+        .test {
+            padding: 0.5rem 1rem;
+            margin: 0.25rem 0;
+            border-radius: 4px;
+            background: #0f172a;
+        }
+        .test.pass {
+            border-left: 4px solid #4ade80;
+        }
+        .test.fail {
+            border-left: 4px solid #f87171;
+            background: #450a0a;
+        }
+        .test .name { color: #e2e8f0; }
+        .test .status {
+            float: right;
+            font-weight: bold;
+        }
+        .test.pass .status { color: #4ade80; }
+        .test.fail .status { color: #f87171; }
+        .test .error {
+            color: #fca5a5;
+            margin-top: 0.5rem;
+            padding-left: 1rem;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+        }
+        .category {
+            color: #fbbf24;
+            margin: 1.5rem 0 0.5rem 0;
+            font-size: 1.1rem;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Tests - Intel 8080 + FPU</h1>
+    <div class="summary" id="summary">Ejecutando tests...</div>
+    <div id="results"></div>
+
+    <!-- Cargamos las clases como scripts globales -->
+    <script src="cpu.js"></script>
+    <script src="fpu.js"></script>
+    <script src="assembler.js"></script>
+
+    <!-- Script de tests -->
+    <script>
+    (function() {
+        // ─── Helpers ───
+        const results = [];
+        let currentCategory = '';
+
+        function category(name) {
+            currentCategory = name;
+            const div = document.createElement('div');
+            div.className = 'category';
+            div.textContent = '▶ ' + name;
+            document.getElementById('results').appendChild(div);
+        }
+
+        function runTest(name, fn) {
+            const testDiv = document.createElement('div');
+            testDiv.className = 'test';
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'name';
+            nameSpan.textContent = name;
+            const statusSpan = document.createElement('span');
+            statusSpan.className = 'status';
+            testDiv.appendChild(nameSpan);
+            testDiv.appendChild(statusSpan);
+
+            try {
+                fn();
+                testDiv.classList.add('pass');
+                statusSpan.textContent = '✓ PASS';
+                results.push({ name, pass: true });
+            } catch (e) {
+                testDiv.classList.add('fail');
+                statusSpan.textContent = '✗ FAIL';
+                const errDiv = document.createElement('div');
+                errDiv.className = 'error';
+                errDiv.textContent = e.message + '\n' + (e.stack || '').split('\n').slice(1, 4).join('\n');
+                testDiv.appendChild(errDiv);
+                results.push({ name, pass: false, error: e.message });
+            }
+            document.getElementById('results').appendChild(testDiv);
+        }
+
+        // assert casero (reemplaza al módulo 'assert' de Node)
+        const assert = {
+            strictEqual(actual, expected, msg) {
+                if (actual !== expected) {
+                    throw new Error(`${msg || 'assert.strictEqual'}: esperado ${JSON.stringify(expected)}, obtenido ${JSON.stringify(actual)}`);
+                }
+            },
+            ok(value, msg) {
+                if (!value) throw new Error(msg || 'assert.ok: valor falsy');
+            },
+            throws(fn, regex, msg) {
+                let threw = false;
+                let caught = null;
+                try { fn(); } catch (e) { threw = true; caught = e; }
+                if (!threw) throw new Error(msg || 'assert.throws: no lanzó excepción');
+                if (regex && !regex.test(caught.message)) {
+                    throw new Error(`assert.throws: mensaje "${caught.message}" no coincide con ${regex}`);
+                }
+            }
+        };
+
+        // ─── Helpers específicos del FPU ───
+        function makeSystem() {
+            const cpu = new Intel8080();
+            const fpu = new FPU(cpu.memory);
+            cpu.attachFPU(fpu);
+            return { cpu, fpu };
+        }
+
+        function runUntilHalt(cpu, maxSteps = 5000) {
+            let steps = 0;
+            while (!cpu.halted && steps < maxSteps) {
+                cpu.step();
+                steps++;
+            }
+            if (steps >= maxSteps) throw new Error(`El programa no terminó tras ${maxSteps} pasos`);
+            return steps;
+        }
+
+        function assembleAndRun(source) {
+            const { cpu, fpu } = makeSystem();
+            const assembler = new Assembler8080();
+            const result = assembler.assemble(source);
+            cpu.memory.set(result.binary);
+            runUntilHalt(cpu);
+            return { cpu, fpu };
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // CATEGORÍA 1: CPU básico (tests originales)
+        // ═══════════════════════════════════════════════════════════════
+        category('CPU básico');
+
+        runTest('CPU Reset & Initial Values', () => {
+            const cpu = new Intel8080();
+            assert.strictEqual(cpu.registers.a, 0);
+            assert.strictEqual(cpu.registers.b, 0);
+            assert.strictEqual(cpu.registers.sp, 0xFFFF);
+            assert.strictEqual(cpu.registers.pc, 0);
+            assert.strictEqual(cpu.flags.z, false);
+            assert.strictEqual(cpu.flags.cy, false);
+            assert.strictEqual(cpu.halted, false);
+        });
+
+        runTest('INR / DCR AC Flag Behavior', () => {
+            const cpu = new Intel8080();
+            cpu.registers.a = 0x0F;
+            cpu.execute(0x3C);
+            assert.strictEqual(cpu.registers.a, 0x10);
+            assert.strictEqual(cpu.flags.ac, true, 'INR 0x0F should set AC flag');
+
+            cpu.registers.a = 0x10;
+            cpu.execute(0x3D);
+            assert.strictEqual(cpu.registers.a, 0x0F);
+            assert.strictEqual(cpu.flags.ac, false, 'DCR 0x10 should clear AC flag');
+
+            cpu.registers.a = 0x0F;
+            cpu.execute(0x3D);
+            assert.strictEqual(cpu.registers.a, 0x0E);
+            assert.strictEqual(cpu.flags.ac, true, 'DCR 0x0F should set AC flag');
+        });
+
+        runTest('Subtraction AC and Carry Flag Logic', () => {
+            const cpu = new Intel8080();
+            cpu.registers.a = 0x3E;
+            cpu.executeALU(2, 0x05);
+            assert.strictEqual(cpu.registers.a, 0x39);
+            assert.strictEqual(cpu.flags.cy, false);
+            assert.strictEqual(cpu.flags.ac, true, 'SUB 0x3E - 0x05 should set AC');
+
+            cpu.reset();
+            cpu.registers.a = 0x00;
+            cpu.executeALU(2, 0x01);
+            assert.strictEqual(cpu.registers.a, 0xFF);
+            assert.strictEqual(cpu.flags.cy, true);
+            assert.strictEqual(cpu.flags.ac, false);
+        });
+
+        runTest('Rotate Masking (RLC / RAL)', () => {
+            const cpu = new Intel8080();
+            cpu.registers.a = 0x80;
+            cpu.execute(0x07);
+            assert.strictEqual(cpu.registers.a, 0x01);
+            assert.strictEqual(cpu.flags.cy, true);
+
+            cpu.reset();
+            cpu.registers.a = 0x80;
+            cpu.flags.cy = false;
+            cpu.execute(0x17);
+            assert.strictEqual(cpu.registers.a, 0x00);
+            assert.strictEqual(cpu.flags.cy, true);
+        });
+
+        // ═══════════════════════════════════════════════════════════════
+        // CATEGORÍA 2: Ensamblador 8080 (tests originales)
+        // ═══════════════════════════════════════════════════════════════
+        category('Ensamblador 8080');
+
+        runTest('Assembler Supports Pair Names (BC, DE, HL)', () => {
+            const assembler = new Assembler8080();
+            const source = `
+                LXI BC, 1234H
+                LXI DE, 5678H
+                LXI HL, 9ABCH
+            `;
+            const result = assembler.assemble(source);
+            const bin = result.binary;
+            assert.strictEqual(bin[0], 0x01);
+            assert.strictEqual(bin[1], 0x34);
+            assert.strictEqual(bin[2], 0x12);
+            assert.strictEqual(bin[3], 0x11);
+            assert.strictEqual(bin[4], 0x78);
+            assert.strictEqual(bin[5], 0x56);
+            assert.strictEqual(bin[6], 0x21);
+            assert.strictEqual(bin[7], 0xBC);
+            assert.strictEqual(bin[8], 0x9A);
+        });
+
+        runTest('Assembler Supports RST 0 - RST 7', () => {
+            const assembler = new Assembler8080();
+            const result = assembler.assemble('RST 0\nRST 3\nRST 7');
+            assert.strictEqual(result.binary[0], 0xC7);
+            assert.strictEqual(result.binary[1], 0xDF);
+            assert.strictEqual(result.binary[2], 0xFF);
+        });
+
+        runTest('Assembler Rejects Invalid Code', () => {
+            const assembler = new Assembler8080();
+            assert.throws(() => assembler.assemble('MOV B, X'), /Invalid register/i);
+            assert.throws(() => assembler.assemble('MOV M, M'), /Cannot use MOV M, M/i);
+            assert.throws(() => assembler.assemble('JMP UNDEFINED_LABEL'), /Undefined label/i);
+        });
+
+        // ═══════════════════════════════════════════════════════════════
+        // CATEGORÍA 3: Ensamblado de pseudo-instrucciones FPU
+        // ═══════════════════════════════════════════════════════════════
+        category('Ensamblador FPU (expansión de bytes)');
+
+        runTest('FLDI F0, 3.14 expande a 20 bytes', () => {
+            const assembler = new Assembler8080();
+            const result = assembler.assemble('FLDI F0, 3.14');
+            assert.strictEqual(result.maxAddr, 20);
+            const expectedAddrs = [0x01, 0x02, 0x03, 0x04];
+            for (let i = 0; i < 4; i++) {
+                const off = i * 5;
+                assert.strictEqual(result.binary[off], 0x3E, `Par ${i}: MVI A`);
+                assert.strictEqual(result.binary[off + 2], 0x32, `Par ${i}: STA`);
+                assert.strictEqual(result.binary[off + 3], expectedAddrs[i], `Par ${i}: addr low`);
+                assert.strictEqual(result.binary[off + 4], 0xFF, `Par ${i}: addr high`);
+            }
+        });
+
+        runTest('FLDI F1, 2.71 apunta a 0xFF05-0xFF08', () => {
+            const assembler = new Assembler8080();
+            const result = assembler.assemble('FLDI F1, 2.71');
+            const expectedAddrs = [0x05, 0x06, 0x07, 0x08];
+            for (let i = 0; i < 4; i++) {
+                const off = i * 5;
+                assert.strictEqual(result.binary[off + 3], expectedAddrs[i]);
+                assert.strictEqual(result.binary[off + 4], 0xFF);
+            }
+        });
+
+        runTest('FADD/FSUB/FMUL/FDIV expanden a 5 bytes', () => {
+            const assembler = new Assembler8080();
+            const ops = [
+                { src: 'FADD', cmd: 0x01 },
+                { src: 'FSUB', cmd: 0x02 },
+                { src: 'FMUL', cmd: 0x03 },
+                { src: 'FDIV', cmd: 0x04 }
+            ];
+            for (const { src, cmd } of ops) {
+                const result = assembler.assemble(src);
+                assert.strictEqual(result.maxAddr, 5, `${src} ocupa 5 bytes`);
+                assert.strictEqual(result.binary[0], 0x3E, `${src}: MVI A`);
+                assert.strictEqual(result.binary[1], cmd, `${src}: comando`);
+                assert.strictEqual(result.binary[2], 0x32, `${src}: STA`);
+                assert.strictEqual(result.binary[3], 0x00, `${src}: 0xFF00 low`);
+                assert.strictEqual(result.binary[4], 0xFF, `${src}: 0xFF00 high`);
+            }
+        });
+
+        runTest('FSTA 2000H expande a 24 bytes', () => {
+            const assembler = new Assembler8080();
+            const result = assembler.assemble('FSTA 2000H');
+            assert.strictEqual(result.maxAddr, 24);
+            const expectedSrc = [0x01, 0x02, 0x03, 0x04];
+            const expectedDst = [0x00, 0x01, 0x02, 0x03];
+            for (let i = 0; i < 4; i++) {
+                const off = i * 6;
+                assert.strictEqual(result.binary[off], 0x3A, `Par ${i}: LDA`);
+                assert.strictEqual(result.binary[off + 1], expectedSrc[i]);
+                assert.strictEqual(result.binary[off + 2], 0xFF);
+                assert.strictEqual(result.binary[off + 3], 0x32, `Par ${i}: STA`);
+                assert.strictEqual(result.binary[off + 4], expectedDst[i]);
+                assert.strictEqual(result.binary[off + 5], 0x20);
+            }
+        });
+
+        runTest('Rechaza registro flotante inválido', () => {
+            const assembler = new Assembler8080();
+            assert.throws(() => assembler.assemble('FLDI F7, 1.0'), /Invalid FPU register/i);
+            assert.throws(() => assembler.assemble('FLDI A, 1.0'), /Invalid FPU register/i);
+        });
+
+        runTest('Rechaza valor flotante inválido', () => {
+            const assembler = new Assembler8080();
+            assert.throws(() => assembler.assemble('FLDI F0, abc'), /Invalid float value/i);
+        });
+
+        // ═══════════════════════════════════════════════════════════════
+        // CATEGORÍA 4: Ejecución end-to-end CPU + FPU
+        // ═══════════════════════════════════════════════════════════════
+        category('Ejecución end-to-end CPU + FPU');
+
+        runTest('FLDI F0, 3.14 carga el float en memoria', () => {
+            const { fpu } = assembleAndRun('FLDI F0, 3.14\nHLT');
+            const value = fpu.readFloat(0xFF01);
+            assert.ok(Math.abs(value - 3.14) < 0.001, `Esperado ~3.14, obtenido ${value}`);
+        });
+
+        runTest('FADD calcula 3.14 + 2.71', () => {
+            const { fpu } = assembleAndRun(`
+                FLDI F0, 3.14
+                FLDI F1, 2.71
+                FADD
+                HLT
+            `);
+            const value = fpu.readFloat(0xFF01);
+            assert.ok(Math.abs(value - 5.85) < 0.01, `Esperado ~5.85, obtenido ${value}`);
+        });
+
+        runTest('FSUB calcula 10.0 - 3.5 = 6.5', () => {
+            const { fpu } = assembleAndRun(`
+                FLDI F0, 10.0
+                FLDI F1, 3.5
+                FSUB
+                HLT
+            `);
+            assert.strictEqual(fpu.readFloat(0xFF01), 6.5);
+        });
+
+        runTest('FMUL calcula 3.0 * 4.0 = 12.0', () => {
+            const { fpu } = assembleAndRun(`
+                FLDI F0, 3.0
+                FLDI F1, 4.0
+                FMUL
+                HLT
+            `);
+            assert.strictEqual(fpu.readFloat(0xFF01), 12.0);
+        });
+
+        runTest('FDIV calcula 15.0 / 4.0 = 3.75', () => {
+            const { fpu } = assembleAndRun(`
+                FLDI F0, 15.0
+                FLDI F1, 4.0
+                FDIV
+                HLT
+            `);
+            assert.strictEqual(fpu.readFloat(0xFF01), 3.75);
+        });
+
+        runTest('FSTA guarda el resultado en memoria', () => {
+            const { fpu } = assembleAndRun(`
+                FLDI F0, 5.5
+                FSTA 2000H
+                HLT
+            `);
+            assert.strictEqual(fpu.readFloat(0x2000), 5.5);
+        });
+
+        runTest('Pipeline: (10.5 + 4.5) * 2 / 5 - 1 = 5.0', () => {
+            const { fpu } = assembleAndRun(`
+                FLDI F0, 10.5
+                FLDI F1, 4.5
+                FADD
+                FLDI F1, 2.0
+                FMUL
+                FLDI F1, 5.0
+                FDIV
+                FLDI F1, 1.0
+                FSUB
+                FSTA 2000H
+                HLT
+            `);
+            assert.strictEqual(fpu.readFloat(0x2000), 5.0);
+        });
+
+        runTest('FDIV por cero activa bandera divByZero', () => {
+            const { fpu } = assembleAndRun(`
+                FLDI F0, 1.0
+                FLDI F1, 0.0
+                FDIV
+                HLT
+            `);
+            assert.strictEqual(fpu.flags.divByZero, true);
+        });
+
+        runTest('Maneja números negativos', () => {
+            const { fpu } = assembleAndRun(`
+                FLDI F0, -3.5
+                FLDI F1, 1.5
+                FADD
+                HLT
+            `);
+            assert.strictEqual(fpu.readFloat(0xFF01), -2.0);
+        });
+
+        runTest('CPU puede disparar el FPU escribiendo en 0xFF00', () => {
+            const { cpu, fpu } = makeSystem();
+            fpu.writeFloat(0xFF01, 5.0);
+            fpu.writeFloat(0xFF05, 3.0);
+            cpu.writeMemory(0xFF00, 0x01);
+            assert.strictEqual(fpu.registers.f0, 8.0);
+        });
+
+        // ─── Resumen final ───
+        const passed = results.filter(r => r.pass).length;
+        const failed = results.filter(r => !r.pass).length;
+        const total = results.length;
+        const summary = document.getElementById('summary');
+        summary.innerHTML = `
+            <span class="total">Total: ${total}</span> |
+            <span class="passed">✓ Passed: ${passed}</span> |
+            <span class="failed">✗ Failed: ${failed}</span>
+        `;
+        if (failed === 0) {
+            console.log('%c✅ TODOS LOS TESTS PASARON', 'color: #4ade80; font-size: 20px; font-weight: bold');
+        } else {
+            console.error(`❌ ${failed} test(s) fallaron`);
+        }
+    })();
+    </script>
+</body>
+</html>

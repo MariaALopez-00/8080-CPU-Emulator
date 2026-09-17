@@ -1,8 +1,47 @@
 class Intel8080 {
     constructor() {
         this.memory = new Uint8Array(65536);
+        // ═══════════════════════════════════════════════════════════
+        // [FPU] Integración con el Coprocesador de Punto Flotante
+        // ═══════════════════════════════════════════════════════════
+        this.fpu = null;              // Referencia al coprocesador (opcional)
+        this.FPU_BASE = 0xFF00;       // Dirección base de la zona mapeada del FPU
+        this.FPU_END  = 0xFF1F;       // Dirección final de la zona mapeada del FPU
+        // ═══════════════════════════════════════════════════════════
         this.reset();
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ═══ [FPU] BLOQUE DE INTEGRACIÓN CON EL COPROCESADOR ═══════════
+    // ═══════════════════════════════════════════════════════════════
+    // Estos métodos permiten al CPU comunicarse con el coprocesador
+    // de punto flotante a través de memoria mapeada (0xFF00-0xFF1F).
+    // Si no hay FPU asociado, el CPU funciona exactamente igual que antes.
+    // ═══════════════════════════════════════════════════════════════
+
+    // Asocia un FPU al CPU. El FPU compartirá la misma RAM.
+    attachFPU(fpu) {
+        this.fpu = fpu;
+        // Si el FPU fue creado sin memoria, le pasamos la nuestra
+        if (fpu && !fpu.memory) {
+            fpu.memory = this.memory;
+        }
+    }
+
+    // Desasocia el FPU actual del CPU
+    detachFPU() {
+        this.fpu = null;
+    }
+
+    // Comprueba si una dirección pertenece a la zona mapeada del FPU
+    isFPUAddress(addr) {
+        const a = addr & 0xFFFF;
+        return a >= this.FPU_BASE && a <= this.FPU_END;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ═══ [FPU] FIN DEL BLOQUE DE INTEGRACIÓN ═══════════════════════
+    // ═══════════════════════════════════════════════════════════════
 
     reset() {
         this.registers = {
@@ -27,6 +66,11 @@ class Intel8080 {
         if (this.memory) {
             this.memory.fill(0);
         }
+        // ═══ [FPU] Resetear también el coprocesador si está asociado ═══
+        if (this.fpu) {
+            this.fpu.reset();
+        }
+        // ═══════════════════════════════════════════════════════════════
     }
 
     getRP(rp) {
@@ -97,11 +141,37 @@ class Intel8080 {
     }
 
     readMemory(addr) {
-        return this.memory[addr & 0xFFFF];
+        const a = addr & 0xFFFF;
+
+        // ═══ [FPU] Interceptar lecturas en la zona mapeada del FPU ═══
+        if (this.fpu && this.isFPUAddress(a)) {
+            const fpuValue = this.fpu.handleRead(a);
+            if (fpuValue !== undefined) {
+                return fpuValue & 0xFF;
+            }
+        }
+        // ═══════════════════════════════════════════════════════════════
+
+        return this.memory[a];
     }
 
     writeMemory(addr, val) {
-        this.memory[addr & 0xFFFF] = val & 0xFF;
+        const a = addr & 0xFFFF;
+        const v = val & 0xFF;
+
+        // ═══ [FPU] Interceptar escrituras en la zona mapeada del FPU ═══
+        if (this.fpu && this.isFPUAddress(a)) {
+            const handled = this.fpu.handleWrite(a, v);
+            if (handled) {
+                // El FPU se encargó de la escritura. También reflejamos
+                // el byte en la RAM real para que la UI de memoria lo muestre.
+                this.memory[a] = v;
+                return;
+            }
+        }
+        // ═══════════════════════════════════════════════════════════════
+
+        this.memory[a] = v;
     }
 
     fetch() {

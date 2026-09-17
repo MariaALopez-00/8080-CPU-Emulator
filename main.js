@@ -1,5 +1,9 @@
 const cpu = new Intel8080();
 const assembler = new Assembler8080();
+// ═══ [FPU] Instanciar el coprocesador y asociarlo al CPU ═══
+const fpu = new FPU(cpu.memory);
+cpu.attachFPU(fpu);
+// ═══════════════════════════════════════════════════════════════
 
 let runInterval = null;
 let memoryStart = 0;
@@ -29,6 +33,9 @@ function updateUI() {
 
     renderMemory();
     renderStack();
+    // ═══ [FPU] Actualizar también la UI del coprocesador ═══
+    updateFPUUI();
+    // ═══════════════════════════════════════════════════════════════
 }
 
 function renderStack() {
@@ -102,12 +109,122 @@ function renderMemory() {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// ═══ [FPU] ACTUALIZACIÓN DE LA UI DEL COPROCESADOR ═══════════════
+// ═══════════════════════════════════════════════════════════════════
+
+// Lee los 4 registros flotantes desde la RAM (fuente de verdad) y
+// actualiza sus valores y representación hexadecimal en la UI.
+function updateFPUUI() {
+    if (!fpu) return;
+
+    // Registros flotantes: leemos de la RAM para reflejar siempre el
+    // estado real, incluso si el CPU acaba de escribir un FLDI.
+    updateFPURegister('fpu-f0', 'fpu-f0-hex', fpu.readFloat(0xFF01));
+    updateFPURegister('fpu-f1', 'fpu-f1-hex', fpu.readFloat(0xFF05));
+    updateFPURegister('fpu-f2', 'fpu-f2-hex', fpu.readFloat(0xFF09));
+    updateFPURegister('fpu-f3', 'fpu-f3-hex', fpu.readFloat(0xFF0D));
+
+    // Banderas del FPU
+    document.getElementById('fpu-flag-z').textContent = fpu.flags.zero ? '1' : '0';
+    document.getElementById('fpu-flag-s').textContent = fpu.flags.sign ? '1' : '0';
+    document.getElementById('fpu-flag-ov').textContent = fpu.flags.overflow ? '1' : '0';
+    document.getElementById('fpu-flag-un').textContent = fpu.flags.underflow ? '1' : '0';
+    document.getElementById('fpu-flag-pr').textContent = fpu.flags.precision ? '1' : '0';
+    document.getElementById('fpu-flag-inv').textContent = fpu.flags.invalid ? '1' : '0';
+    document.getElementById('fpu-flag-dz').textContent = fpu.flags.divByZero ? '1' : '0';
+
+    // Registros de estado y control
+    document.getElementById('fpu-status-byte').textContent = fpu.getStatusByte().toString(16).toUpperCase().padStart(2, '0');
+    document.getElementById('fpu-control-byte').textContent = fpu.roundingMode.toString(16).toUpperCase().padStart(2, '0');
+
+    // Pila del FPU
+    renderFPUStack();
+}
+
+// Actualiza un registro flotante en la UI (valor + hex IEEE 754)
+function updateFPURegister(valueId, hexId, value) {
+    const valueEl = document.getElementById(valueId);
+    const hexEl = document.getElementById(hexId);
+    if (!valueEl || !hexEl) return;
+
+    valueEl.textContent = formatFloat(value);
+
+    // Representación hexadecimal de los 32 bits IEEE 754
+    const buf = new ArrayBuffer(4);
+    const f32 = new Float32Array(buf);
+    const u32 = new Uint32Array(buf);
+    f32[0] = value;
+    hexEl.textContent = u32[0].toString(16).toUpperCase().padStart(8, '0');
+}
+
+// Formatea un número flotante para mostrarlo de forma legible.
+// Redondea a 7 dígitos significativos (precisión de float32) y
+// elimina ceros finales innecesarios.
+function formatFloat(v) {
+    if (Number.isNaN(v)) return 'NaN';
+    if (!isFinite(v)) return v > 0 ? '+∞' : '-∞';
+    if (v === 0) return '0.0';
+
+    const abs = Math.abs(v);
+    if (abs >= 1e7 || abs < 1e-4) {
+        return v.toExponential(4);
+    }
+
+    let s = v.toPrecision(7);
+    if (s.includes('.')) {
+        s = s.replace(/0+$/, '');
+        if (s.endsWith('.')) s += '0';
+    }
+    return s;
+}
+
+// Renderiza la pila interna del FPU (máximo 8 valores)
+function renderFPUStack() {
+    const table = document.getElementById('fpu-stack-table');
+    if (!table) return;
+    table.innerHTML = '';
+
+    document.getElementById('fpu-sp').textContent = fpu.stackPointer.toString();
+
+    const topIndex = fpu.stackPointer - 1;
+
+    // Mostrar 6 slots desde el índice 5 hasta el 0
+    for (let i = 5; i >= 0; i--) {
+        const row = document.createElement('div');
+        row.className = 'fpu-stack-row';
+        if (i === topIndex) row.classList.add('active');
+
+        const idxSpan = document.createElement('span');
+        idxSpan.className = 'fpu-stack-idx';
+        idxSpan.textContent = (i === topIndex ? 'SP ➔ ' : '     ') + '[' + i + ']';
+
+        const valSpan = document.createElement('span');
+        valSpan.className = 'fpu-stack-val';
+        if (i < fpu.stackPointer) {
+            valSpan.textContent = formatFloat(fpu.stack[i]);
+        } else {
+            valSpan.textContent = '—';
+        }
+
+        row.appendChild(idxSpan);
+        row.appendChild(valSpan);
+        table.appendChild(row);
+    }
+}
+// ═══════════════════════════════════════════════════════════════════
+// ═══ [FPU] FIN DE LA ACTUALIZACIÓN DE LA UI DEL COPROCESADOR ═════
+// ═══════════════════════════════════════════════════════════════════
+
 document.getElementById('btn-assemble').addEventListener('click', () => {
     const source = document.getElementById('code-editor').value;
     const output = document.getElementById('assembler-output');
     try {
         const result = assembler.assemble(source);
         cpu.memory.set(result.binary);
+        // ═══ [FPU] Reiniciar el coprocesador para empezar con estado limpio ═══
+        fpu.reset();
+        // ═══════════════════════════════════════════════════════════════
         output.textContent = 'Assembly successful! Loaded into memory.';
         output.className = 'success';
         updateUI();
@@ -162,7 +279,7 @@ document.getElementById('btn-reset').addEventListener('click', () => {
         clearInterval(runInterval);
         runInterval = null;
     }
-    cpu.reset();
+    cpu.reset(); // El reset del CPU también resetea el FPU (ver cpu.js)
 
     // Clear assembler output
     const output = document.getElementById('assembler-output');
